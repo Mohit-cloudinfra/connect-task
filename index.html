@@ -2,21 +2,22 @@
 <html>
 <head>
   <meta charset="utf-8"/>
-  <title>Shark Queue - Task Console</title>
+  <title>SharkEnglishQueue — Task Console</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
     body { font-family: Arial, sans-serif; margin: 16px; }
     table { width:100%; border-collapse:collapse; }
-    th, td { padding:8px; border:1px solid #ddd; text-align:left; cursor: pointer; }
-    th { background:#f5f5f5; }
+    th, td { padding:8px; border:1px solid #ddd; text-align:left; }
+    th { background:#f5f5f5; user-select:none; cursor:default; }
     button { padding:6px 10px; margin-right:6px; }
     .small { font-size:0.9em; color:#444; }
-    .sortable:hover { background: #e0e0e0; }
+    .sort { cursor:pointer; }
+    .num { white-space:nowrap; }
   </style>
 </head>
 <body>
   <h2>SharkEnglishQueue — Task Console</h2>
-  <p class="small">Shows tasks in SharkEnglishQueue. Use Hold to move to TempEnglishSharkQueue; Resume moves back.</p>
+  <p class="small">Shows tasks in SharkEnglishQueue. “Hold” moves to TempEnglishSharkQueue; “Resume” moves back.</p>
 
   <div>
     <label>Queue ID: <input id="queueId" value="c14c7415-189e-4212-a766-6bfcbdc62e6d" style="width:360px" /></label>
@@ -30,9 +31,9 @@
         <th>ContactId</th>
         <th>Title</th>
         <th>Description</th>
-        <th class="sortable" data-sort="startDate">Start Date</th>
-        <th class="sortable" data-sort="startTime">Start Time</th>
-        <th>Enqueued</th>
+        <th>Enqueued (current)</th>
+        <th class="sort" data-key="start">Start Date ▲▼</th>
+        <th class="sort" data-key="time">Start Time ▲▼</th>
         <th>State</th>
         <th>Actions</th>
       </tr>
@@ -41,18 +42,37 @@
   </table>
 
 <script>
-const API_BASE = "https://YOUR_API_BASE_URL";
-const API_KEY = "YOUR_API_KEY_IF_USED";
-
-let allRows = [];
-let sortDirection = { startDate: 'asc', startTime: 'asc' };
+/** <<< EDIT THESE TWO >>> **/
+const API_BASE = "https://YOUR_API_GATEWAY_ID.execute-api.YOUR-REGION.amazonaws.com"; // e.g. https://abc123.execute-api.us-west-2.amazonaws.com
+const API_KEY  = ""; // optional if your API uses an API key
 
 const el = {
   queueId: document.getElementById('queueId'),
   load: document.getElementById('load'),
   status: document.getElementById('status'),
-  tbody: document.querySelector('#tbl tbody')
+  tbody: document.querySelector('#tbl tbody'),
+  thead: document.querySelector('#tbl thead')
 };
+
+let cache = [];         // last loaded rows
+let sortKey = 'start';  // 'start' or 'time'
+let sortDir = 'asc';    // 'asc' or 'desc'
+
+function fmtDate(epochMs) {
+  if (!epochMs) return '';
+  const d = new Date(epochMs);
+  return d.toLocaleDateString();
+}
+function fmtTime(epochMs) {
+  if (!epochMs) return '';
+  const d = new Date(epochMs);
+  return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+}
+function fmtDateTime(epochMs) {
+  if (!epochMs) return '';
+  const d = new Date(epochMs);
+  return d.toLocaleString();
+}
 
 async function apiFetch(path, opts = {}) {
   const headers = opts.headers || {};
@@ -71,9 +91,9 @@ async function loadTasks() {
     el.status.textContent = 'Loading...';
     const q = el.queueId.value.trim();
     const data = await apiFetch(`/tasks?queueId=${encodeURIComponent(q)}`);
-    allRows = data.rows || [];
-    renderRows(allRows);
-    el.status.textContent = `Loaded ${ allRows.length } tasks`;
+    cache = (data.rows || []);
+    applySortAndRender();
+    el.status.textContent = `Loaded ${ cache.length } tasks`;
   } catch (err) {
     console.error(err);
     el.status.textContent = 'Error: ' + err.message;
@@ -81,20 +101,31 @@ async function loadTasks() {
   }
 }
 
+function applySortAndRender() {
+  const rows = [...cache];
+  if (sortKey === 'start' || sortKey === 'time') {
+    rows.sort((a, b) => {
+      const av = a.originalStartTimestamp || 0;
+      const bv = b.originalStartTimestamp || 0;
+      return sortDir === 'asc' ? (av - bv) : (bv - av);
+    });
+  }
+  renderRows(rows);
+}
+
 function renderRows(rows) {
   el.tbody.innerHTML = '';
   for (const r of rows) {
-    const title = (r.attributes && (r.attributes.title || r.attributes.Title)) || r.name || '';
-    const desc = (r.attributes && (r.attributes.description || r.attributes.Description)) || r.description || '';
-    const enq = r.enqueueTimestamp ? new Date(r.enqueueTimestamp).toLocaleString() : '';
     const tr = document.createElement('tr');
+    const title = r.title || valFromAttrs(r, ['Title', 'title']) || '';
+    const desc  = r.description || valFromAttrs(r, ['Description','description']) || '';
     tr.innerHTML = `
-      <td>${r.contactId}</td>
+      <td class="num">${r.contactId}</td>
       <td>${escapeHtml(title)}</td>
       <td>${escapeHtml(desc)}</td>
-      <td>${r.startDate || ''}</td>
-      <td>${r.startTime || ''}</td>
-      <td>${enq}</td>
+      <td class="num">${fmtDateTime(r.enqueueTimestamp)}</td>
+      <td class="num">${fmtDate(r.originalStartTimestamp)}</td>
+      <td class="num">${fmtTime(r.originalStartTimestamp)}</td>
       <td>${r.state || ''}</td>
       <td>
         <button data-op="hold" data-id="${r.contactId}">Hold</button>
@@ -106,27 +137,13 @@ function renderRows(rows) {
   }
 }
 
-function sortTable(field) {
-  const dir = sortDirection[field];
-  allRows.sort((a, b) => {
-    if (field === 'startDate') {
-      const dA = new Date(a.startDate);
-      const dB = new Date(b.startDate);
-      return dir === 'asc' ? dA - dB : dB - dA;
-    }
-    if (field === 'startTime') {
-      return dir === 'asc' ? a.startTime.localeCompare(b.startTime) : b.startTime.localeCompare(a.startTime);
-    }
-  });
-  sortDirection[field] = dir === 'asc' ? 'desc' : 'asc';
-  renderRows(allRows);
+function valFromAttrs(r, keys) {
+  const a = r.segmentAttributes || r.attributes || {};
+  for (const k of keys) {
+    if (a[k]) return a[k];
+  }
+  return '';
 }
-
-document.querySelectorAll('.sortable').forEach(th => {
-  th.addEventListener('click', () => {
-    sortTable(th.dataset.sort);
-  });
-});
 
 el.tbody.addEventListener('click', async (ev) => {
   const btn = ev.target.closest('button');
@@ -142,9 +159,22 @@ el.tbody.addEventListener('click', async (ev) => {
   } else if (op === 'transfer') {
     const q = prompt('Target queue id (example: 6168...):');
     if (!q) return;
-    await callAction('/transfer', { contactId, targetQueueId: q });
+    await callAction('/transfer', { contactId, targetQueueId: q.trim() });
   }
   await loadTasks();
+});
+
+el.thead.addEventListener('click', (ev) => {
+  const th = ev.target.closest('.sort');
+  if (!th) return;
+  const key = th.dataset.key;       // 'start' or 'time'
+  if (sortKey === key) {
+    sortDir = (sortDir === 'asc' ? 'desc' : 'asc');
+  } else {
+    sortKey = key;
+    sortDir = 'asc';
+  }
+  applySortAndRender();
 });
 
 async function callAction(path, body) {
@@ -164,7 +194,7 @@ function escapeHtml(s = '') {
 }
 
 el.load.onclick = loadTasks;
-loadTasks();
+loadTasks();   // initial load
 </script>
 </body>
 </html>
