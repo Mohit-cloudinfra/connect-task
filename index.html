@@ -1,98 +1,170 @@
-<!DOCTYPE html>
-     <html>
-     <head>
-       <title>SharkEnglishQueue — Task Console</title>
-       <style>
-         table { border-collapse: collapse; width: 100%; }
-         th, td { border: 1px solid black; padding: 8px; text-align: left; }
-         th { background-color: #f2f2f2; }
-         button { margin-right: 5px; }
-       </style>
-     </head>
-     <body>
-       <h1>SharkEnglishQueue — Task Console</h1>
-       <p>Shows tasks in SharkEnglishQueue. Use Hold to move to TempEnglishSharkQueue; Resume moves back.</p>
-       <div>
-         Queue ID: <input id="queueId" type="text" value="c14c7415-189e-4212-a766-6bfcbdc62e6d">
-         <button onclick="loadTasks()">Load tasks</button>
-       </div>
-       <table>
-         <thead>
-           <tr>
-             <th>ContactId</th>
-             <th>Title</th>
-             <th>Description</th>
-             <th>Start Date</th>
-             <th>Start Time</th>
-             <th>Enqueued</th>
-             <th>State</th>
-             <th>Actions</th>
-           </tr>
-         </thead>
-         <tbody id="tasksBody"></tbody>
-       </table>
-       <script>
-         const API_BASE_URL = 'https://your-api-gateway-invoke-url.execute-api.us-west-2.amazonaws.com'; // Replace with your API URL
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Shark Queue - Task Console</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body { font-family: Arial, sans-serif; margin: 16px; }
+    table { width:100%; border-collapse:collapse; }
+    th, td { padding:8px; border:1px solid #ddd; text-align:left; cursor: pointer; }
+    th { background:#f5f5f5; }
+    button { padding:6px 10px; margin-right:6px; }
+    .small { font-size:0.9em; color:#444; }
+    .sortable:hover { background: #e0e0e0; }
+  </style>
+</head>
+<body>
+  <h2>SharkEnglishQueue — Task Console</h2>
+  <p class="small">Shows tasks in SharkEnglishQueue. Use Hold to move to TempEnglishSharkQueue; Resume moves back.</p>
 
-         async function loadTasks() {
-           try {
-             const queueId = document.getElementById('queueId').value;
-             const response = await fetch(`${API_BASE_URL}/tasks?queueId=${queueId}`, { method: 'GET' });
-             if (!response.ok) throw new Error(`HTTP error ${response.status}`);
-             const data = await response.json();
-             const tbody = document.getElementById('tasksBody');
-             tbody.innerHTML = ''; // Clear table
-             data.rows.forEach(row => {
-               const tr = document.createElement('tr');
-               const enqueued = row.enqueueTimestamp ? new Date(row.enqueueTimestamp).toLocaleString() : 'N/A';
-               const actions = row.state === 'QUEUED' ? `
-                 <button onclick="holdTask('${row.contactId}')">Hold</button>
-                 <button onclick="resumeTask('${row.contactId}')">Resume</button>
-               ` : '';
-               tr.innerHTML = `
-                 <td>${row.contactId}</td>
-                 <td>${row.title || 'N/A'}</td>
-                 <td>${row.description || 'N/A'}</td>
-                 <td>${new Date(row.initiationTimestamp).toLocaleDateString()}</td>
-                 <td>${new Date(row.initiationTimestamp).toLocaleTimeString()}</td>
-                 <td>${enqueued}</td>
-                 <td>${row.state}</td>
-                 <td>${actions}</td>
-               `;
-               tbody.appendChild(tr);
-             });
-           } catch (err) {
-             alert('Error loading tasks: ' + err.message);
-           }
-         }
+  <div>
+    <label>Queue ID: <input id="queueId" value="c14c7415-189e-4212-a766-6bfcbdc62e6d" style="width:360px" /></label>
+    <button id="load">Load tasks</button>
+    <span id="status" style="margin-left:12px;color:gray"></span>
+  </div>
 
-         async function holdTask(contactId) {
-           try {
-             const response = await fetch(`${API_BASE_URL}/pause`, {
-               method: 'POST',
-               body: JSON.stringify({ contactId }),
-               headers: { 'Content-Type': 'application/json' }
-             });
-             if (!response.ok) throw new Error(`HTTP error ${response.status}`);
-             await loadTasks(); // Refresh
-           } catch (err) {
-             alert('Error holding task: ' + err.message);
-           }
-         }
+  <table aria-label="Tasks table" id="tbl" style="margin-top:12px">
+    <thead>
+      <tr>
+        <th>ContactId</th>
+        <th>Title</th>
+        <th>Description</th>
+        <th class="sortable" data-sort="startDate">Start Date</th>
+        <th class="sortable" data-sort="startTime">Start Time</th>
+        <th>Enqueued</th>
+        <th>State</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
 
-         async function resumeTask(contactId) {
-           try {
-             const response = await fetch(`${API_BASE_URL}/resume`, {
-               method: 'POST',
-               body: JSON.stringify({ contactId }),
-               headers: { 'Content-Type': 'application/json' }
-             });
-             if (!response.ok) throw new Error(`HTTP error ${response.status}`);
-             await loadTasks(); // Refresh
-           } catch (err) {
-             alert('Error resuming task: ' + err.message);
-           }
-         }
-       </script>
-     </body>
-     </html>
+<script>
+const API_BASE = "https://YOUR_API_BASE_URL";
+const API_KEY = "YOUR_API_KEY_IF_USED";
+
+let allRows = [];
+let sortDirection = { startDate: 'asc', startTime: 'asc' };
+
+const el = {
+  queueId: document.getElementById('queueId'),
+  load: document.getElementById('load'),
+  status: document.getElementById('status'),
+  tbody: document.querySelector('#tbl tbody')
+};
+
+async function apiFetch(path, opts = {}) {
+  const headers = opts.headers || {};
+  if (API_KEY && API_KEY.length) headers['x-api-key'] = API_KEY;
+  headers['Content-Type'] = headers['Content-Type'] || 'application/json';
+  const res = await fetch(API_BASE + path, { ...opts, headers, mode: 'cors' });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(res.status + ' ' + text);
+  }
+  return res.status === 204 ? null : res.json();
+}
+
+async function loadTasks() {
+  try {
+    el.status.textContent = 'Loading...';
+    const q = el.queueId.value.trim();
+    const data = await apiFetch(`/tasks?queueId=${encodeURIComponent(q)}`);
+    allRows = data.rows || [];
+    renderRows(allRows);
+    el.status.textContent = `Loaded ${ allRows.length } tasks`;
+  } catch (err) {
+    console.error(err);
+    el.status.textContent = 'Error: ' + err.message;
+    alert('Error loading tasks: ' + err.message);
+  }
+}
+
+function renderRows(rows) {
+  el.tbody.innerHTML = '';
+  for (const r of rows) {
+    const title = (r.attributes && (r.attributes.title || r.attributes.Title)) || r.name || '';
+    const desc = (r.attributes && (r.attributes.description || r.attributes.Description)) || r.description || '';
+    const enq = r.enqueueTimestamp ? new Date(r.enqueueTimestamp).toLocaleString() : '';
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${r.contactId}</td>
+      <td>${escapeHtml(title)}</td>
+      <td>${escapeHtml(desc)}</td>
+      <td>${r.startDate || ''}</td>
+      <td>${r.startTime || ''}</td>
+      <td>${enq}</td>
+      <td>${r.state || ''}</td>
+      <td>
+        <button data-op="hold" data-id="${r.contactId}">Hold</button>
+        <button data-op="resume" data-id="${r.contactId}">Resume</button>
+        <button data-op="transfer" data-id="${r.contactId}">Transfer</button>
+      </td>
+    `;
+    el.tbody.appendChild(tr);
+  }
+}
+
+function sortTable(field) {
+  const dir = sortDirection[field];
+  allRows.sort((a, b) => {
+    if (field === 'startDate') {
+      const dA = new Date(a.startDate);
+      const dB = new Date(b.startDate);
+      return dir === 'asc' ? dA - dB : dB - dA;
+    }
+    if (field === 'startTime') {
+      return dir === 'asc' ? a.startTime.localeCompare(b.startTime) : b.startTime.localeCompare(a.startTime);
+    }
+  });
+  sortDirection[field] = dir === 'asc' ? 'desc' : 'asc';
+  renderRows(allRows);
+}
+
+document.querySelectorAll('.sortable').forEach(th => {
+  th.addEventListener('click', () => {
+    sortTable(th.dataset.sort);
+  });
+});
+
+el.tbody.addEventListener('click', async (ev) => {
+  const btn = ev.target.closest('button');
+  if (!btn) return;
+  const op = btn.dataset.op;
+  const contactId = btn.dataset.id;
+  if (op === 'hold') {
+    if (!confirm('Move this task to TempEnglishSharkQueue (Hold)?')) return;
+    await callAction('/transfer', { contactId, targetQueueId: '6168656d-4007-42f4-b1f5-0218247efd29' });
+  } else if (op === 'resume') {
+    if (!confirm('Move this task back to SharkEnglishQueue (Resume)?')) return;
+    await callAction('/transfer', { contactId, targetQueueId: 'c14c7415-189e-4212-a766-6bfcbdc62e6d' });
+  } else if (op === 'transfer') {
+    const q = prompt('Target queue id (example: 6168...):');
+    if (!q) return;
+    await callAction('/transfer', { contactId, targetQueueId: q });
+  }
+  await loadTasks();
+});
+
+async function callAction(path, body) {
+  try {
+    el.status.textContent = 'Working...';
+    await apiFetch(path, { method: 'POST', body: JSON.stringify(body) });
+    el.status.textContent = 'Done';
+  } catch (e) {
+    console.error(e);
+    alert('Error: ' + e.message);
+    el.status.textContent = 'Error';
+  }
+}
+
+function escapeHtml(s = '') {
+  return String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+el.load.onclick = loadTasks;
+loadTasks();
+</script>
+</body>
+</html>
